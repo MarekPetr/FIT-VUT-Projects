@@ -1,0 +1,24 @@
+Popis:
+	Tato aplikace zajišťuje spolehlivý přenos informací o uživatelích na serveru klientovi.
+	Data získává ze souboru /etc/passwd, který je přístupný serveru.
+
+
+Použití:
+
+	Překlad serveru i klienta: ./make
+	Překlad jen serveru:       ./make server
+	Překlad jen klienta:       ./make client
+	
+
+	./ipk-server -p port
+		port (číslo) číslo portu, na kterém server naslouchá na připojení od klientů.
+		
+	./ipk-client -h host -p port [-n|-f|-l] login
+
+		host: (IP adresa nebo fully-qualified DNS name) identifikace serveru jakožto koncového bodu komunikace klienta;
+		port (číslo) cílové číslo portu;
+		-n značí, že bude vráceno plné jméno uživatele včetně případných dalších informací pro uvedený login (User ID Info);
+		-f značí, že bude vrácena informace o domácím adresáři uživatele pro uvedený login (Home directory);
+		-l značí, že bude vrácen seznam všech uživatelů, tento bude vypsán tak, že každé uživatelské jméno bude na zvláštním řádku; 
+		 v tomto případě je login nepovinný. Je-li však uveden bude použit jako prefix pro výběr uživatelů.
+		 login určuje přihlašovací jméno uživatele pro výše uvedené operace.

@@ -1,0 +1,301 @@
+#!/bin/sh
+export LC_ALL=C
+export POSIXLY_CORRECT=yes
+workDir="."
+
+normEnable=0
+normalize=0
+regexp=".^"
+
+# when terminal is on, the lenght of line is tput cols (lenght of terminal line) minus one 
+# else it is fixed on 79
+if test -t 1 ; then 
+    spaceLeftSizes=$(($(tput cols) - 13))
+    spaceLeftTypes=$(($(tput cols) - 48))
+else 
+    spaceLeftSizes=67 #79 - 12 (12 for "<100 B  ")
+    spaceLeftTypes=32 #79 - 47 (47 for characters of cut types including spaces)
+fi
+
+# usage: string_rep SEARCH REPLACEMENT STRING
+# replaces all instances of SEARCH with REPLACEMENT in STRING
+stringRepl() {
+  in=$3
+  unset out
+  # SEARCH can not be empty
+  case $1 in '') return; esac
+
+  while
+    # break loop if SEARCH is no longer in "$in"
+    case "$in" in
+      *"$1"*) ;;
+      *) break;;
+    esac
+  do
+    # append everything in "$in", up to the first instance of SEARCH, and REPLACEMENT, to "$out"
+    out=$out${in%%"$1"*}$2
+    # remove everything up to and including the first instance of SEARCH from "$in"
+    in=${in#*"$1"}
+  done
+
+  # append whatever is left in "$in" after the last instance of SEARCH to out, and print
+  printf '%s%s\n' "$out" "$in"
+}
+
+drawHashes() {
+    j=0
+    while [ "$j" -lt "$lineHash" ]
+    do
+        printf "\43" # to printf # - 43 Oct
+        j=$(($j + 1))
+    done
+    printf "\n"
+}
+
+toggleNormalizing() {
+    maxHashes=$1
+    spaceLeft=$2
+    if [ "$normEnable" -eq '1' -a "$maxHashes" -gt "$spaceLeft" ]; then
+        normalize=1
+    else
+        normalize=0
+    fi
+}
+
+normalizeAsNeeded() {
+    maxHashes=$1
+    spaceLeft=$2
+    if [ "$normalize" -eq '1' ]; then 
+        lineHash=$((($lineHash * $spaceLeft) / $maxHashes))
+    fi
+}
+
+writeHelp() {
+    printf "    NAME
+            dirgraph - creates a report of given directory
+    
+    SYNOPSIS
+            dirgraph [-i FILE_ERE] [-n] [DIR]
+
+    DESCRIPTION
+            This script analyze the current directory or directory given as the last argument.
+            Then it create a graphical report based on gathered datas.
+            The report shows:  
+                    * information about directories
+                    * number of directories
+                    * number of all files
+                    * histogram of sizes of files
+                    * histogram of ten most occuring files
+
+    OPTIONS
+            If DIR was given, it is analysed. Else analyse the current directory.
+
+            -i
+                    ignore files and directories given by FILE_ERE.
+                    FILE_ERE - Extended regular expression.
+
+            -n
+                    normalize the histogram to fit current size of the output stream.
+            
+            -h
+                    display this help and exit.
+
+    OUTPUT
+            Output is written in the current session of a terminal.
+
+    RETURN CODES
+            dirgraph returns code 0 on success or 1 if returns error.\n"
+}
+
+nOpt=0
+iOpt=0
+
+while getopts :ni:h o
+do      case "$o" in
+    n)  if [ "$nOpt" -eq '0' ]; then 
+            nOpt=1; normEnable=1
+        else
+            echo "It is not possible to use more than one of each argument." >&2; exit 1
+        fi;;
+    
+    i)  if [ "$iOpt" -eq '0' ]; then 
+            iOpt=1; regexp="$OPTARG"
+        else
+            echo "It is not possible to use more than one of each argument." >&2; exit 1
+        fi;;
+
+    h)  writeHelp
+        exit 0;;
+
+    *)  echo "Use options -n and/or -i with a parameter, and/or as last argument choose a directory to analyze." >&2
+        exit 1;;
+        esac
+done
+OPTIND=$(($OPTIND - 1))
+shift "$OPTIND"
+
+if test -n "$*" ; then # the lenght of string is nonzero
+    workDir="$*"
+fi 
+
+cd "$workDir"  || { echo "Directory does not exist or you do not have permission to open it." >&2; exit 1; }
+
+if [ "$regexp" = "-n" ]; then 
+    echo "Use option -i with parameter. -n as a parameter of -i is not allowed." >&2; exit 1
+fi
+
+if [ "$regexp" != ".^" ]; then
+    regexp=$(printf "%s" "$regexp" | stringRepl "^" "/" "$regexp")
+    regexp=$(printf "%s" "$regexp" | stringRepl "$" "($|/)" "$regexp")
+    regexp=".*"$regexp".*"
+fi
+
+if [ -z "$(find . -prune -empty -type d)" ]
+then
+    (find . -type f -o -type d >/dev/null) || { echo "Searching through files and directories failed." >&2; exit 1; }
+else
+    empty=1
+fi
+
+#######################################################################
+
+printf "Root directory: %s\n" "$workDir"
+numDirs=$(find . -type d | grep -E -v "$regexp" | wc -l)
+printf "Directories: %d\n" "$numDirs"
+
+numFiles=$(find . -type f | grep -E -v "$regexp" | wc -l)
+printf "All files: %d\n" "$numFiles"
+
+printf "File size histogram:\n"
+
+lineHashMax=0
+
+# Procedes through all files twice. 
+# On the first go gets the biggest number of hashtags per line, on the second normalizeAsNeeded and draws hashes
+j=0 ; i=0
+for i in 1 2
+do
+    j=0
+    for j in $(seq 9)
+    do
+        case "$j" in
+            "1") fsize="-size -100c"                           intB="<100 B  ";; 
+            "2") fsize="-size -1024c       -size +99c"         intB="<1 KiB  ";; 
+            "3") fsize="-size -10240c      -size +1023c"       intB="<10 KiB ";; 
+            "4") fsize="-size -102400c     -size +10239c"      intB="<100 KiB";; 
+            "5") fsize="-size -1048576c    -size +102399c"     intB="<1 MiB  ";; 
+            "6") fsize="-size -10485760c   -size +1048575c"    intB="<10 MiB ";; 
+            "7") fsize="-size -104857600c  -size +10485759c"   intB="<100 MiB";; 
+            "8") fsize="-size -1073741824c -size +104857599c"  intB="<1 GiB  ";; 
+            "9") fsize="                   -size +1073741823c" intB=">=1 GiB ";;
+        esac
+
+        lineHash=$(find . -type f $fsize | grep -E -v "$regexp" | wc -l) # number of files with $fsize size
+
+    
+    if [ "$i" -eq '1' ]; then
+        if [ $lineHash -gt $lineHashMax ]; then
+            lineHashMax=$lineHash
+        fi
+        if [ "$j" -eq '9' ]; then
+            toggleNormalizing $lineHashMax $spaceLeftSizes
+        fi
+    fi
+
+    if [ "$i" -eq '2' ]; then
+        normalizeAsNeeded $lineHashMax $spaceLeftSizes
+        printf "%s" "  $intB: "
+        drawHashes
+    fi
+
+    done
+done
+########################################################################
+
+nl='
+'
+printf "File type histogram:\n"
+if [ "$empty" = '1' ]; then
+    exit 0
+fi
+# converts file types to two columns consisting of number of occurences of 10 most occuring types in first column 
+# and their description in the second column
+# sort for sorting by name, 
+# uniq -c for wrapping each of the same types in one line preceding its count, 
+# sonr -nr for sorting lines by number of occurences,
+# 'awk <= 10' for prtinting only first 10 lines
+
+types=$(find . -type f | grep -E -v "$regexp" | while read line ; do printf "%s\n" "$line" | file -b "$line"; done)
+
+#if there are any types, then count them, if not, exit without printing anything
+if [ ! -z "$types" -a "$types" != " " ]; then
+        numLines=$(printf "%s\n" "$types" | wc -l)
+else
+exit 1
+fi
+
+# Goes through all of types in the folder, cuts them to be only 40 chars long, 
+# then adds asterisk to mark which line was cut. Then concatenates the line to the string $output,
+# sorts it, adds counts per type and shows only top 10 most occuring lines ($text).
+# Then splits $text to $numLines and $text for further operations.
+i=1
+while [ "$i" -le "$numLines" ]
+do
+    lineText=$(printf "%s\n" "$types" | sed -n "$i"p)       # takes one line of text describing file type
+    sizeLineText=${#lineText}                               # determines the length of one line of type
+    
+    if [ "$sizeLineText" -gt '40' ]                         # if size of line of text types is greater than 40
+    then
+        lineText=$(printf "%s\n" "$lineText" | head -c +40) # cuts text to have 40 chars
+        lineText="$lineText""*"                             # adds asterisk at the end of line to mark the performed cut
+    fi
+    output="$lineText"${nl}"$output"
+    i=$(($i + 1))
+done
+
+output=$(printf "%s" "$output" | sort | uniq -c | sort -nr | awk 'FNR <= 10')
+numLines=$(printf "%s\n" "$output" | wc -l)
+
+# each line numHashType associates to each line of text
+numHashType=$(printf "%s\n" "$output" | awk '{print $1}')               # number of occurences - (future hash tags) one per line        
+text=$(printf "%s\n" "$output" | sed -e 's/^[ \t]*//'| cut -d ' ' -f2-) # description of types - one per line
+######################################
+
+lineHashMax=$(printf "%s\n" "$numHashType" | sed -n 1p)     # takes first number in numhashType - the biggest one
+toggleNormalizing $lineHashMax $spaceLeftTypes
+
+########################################
+
+# Proceeds through 10 most occuring lines ($text), 
+# writtes $text and adds # for each file in $numHashType (or uses normalized number) 
+i=1
+while [ "$i" -le "$numLines" ]
+do
+    lineHash=$(printf "%s\n" "$numHashType" | sed -n "$i"p)  # takes one number of hashtags of multiline variable numHashType 
+    
+    normalizeAsNeeded $lineHashMax $spaceLeftTypes
+
+    lineText=$(printf "%s\n" "$text" | sed -n "$i"p)
+    sizeLineText=${#lineText}                                # determines the length of one line of type
+
+    if printf "%s" "$lineText" | grep '*' >/dev/null; then   # searches for an asterisk as a sign of cut line
+        lineText=$(printf "%s\n" "$lineText" | sed 's/.$//') # deletes an asterisk at the end of line
+        printf "%s" "  $lineText"
+        printf "%s" "...: "
+    else
+        printf "%s" "  $lineText"
+
+        spaces=$((43 - $sizeLineText))
+        count=0
+        while [ $count -lt $spaces ]
+        do
+            printf "%s" " "
+            count=$(($count + 1))
+        done
+        printf "%s" ": "
+    fi
+
+    drawHashes
+
+    i=$(($i + 1))
+done
